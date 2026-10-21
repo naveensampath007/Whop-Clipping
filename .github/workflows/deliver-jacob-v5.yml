@@ -1,0 +1,62 @@
+name: Package all ten Jacob V5 videos
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/deliver-jacob-v5.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Combine the verified original exports
+        shell: python
+        run: |
+          import urllib.request, hashlib, zipfile, io, json
+          root = 'https://raw.githubusercontent.com/naveensampath007/Whop-Clipping/b8d4216/downloads/'
+          sources = [
+              ('Jacob_Co_V5_Runway_And_Slideshows.zip', '9a8650a7bdc0e074cb26d5862326d5ce1ab35d25b27ce684a7a34ca53c417bf0'),
+              ('Jacob_Co_V5_Four_Making_Stories.zip', 'f5c58f88f5658945b39eeaa010683cbebc2af4e7cdd28bb487a0c2766ee20329'),
+          ]
+          files, reports = {}, []
+          for name, expected in sources:
+              data = urllib.request.urlopen(root + name, timeout=90).read()
+              assert hashlib.sha256(data).hexdigest() == expected
+              with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                  assert archive.testzip() is None
+                  for item in archive.infolist():
+                      value = archive.read(item)
+                      if item.filename == 'Verified_Files.json':
+                          reports.extend(json.loads(value))
+                      elif item.filename in files:
+                          assert files[item.filename] == value
+                      else:
+                          files[item.filename] = value
+          assert sum(name.endswith('.mp4') for name in files) == 10
+          assert len(reports) == 10
+          for report in reports:
+              assert hashlib.sha256(files[report['filename']]).hexdigest() == report['sha256']
+          output = 'Jacob_Co_All_10_Videos_V5.zip'
+          with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_STORED) as archive:
+              for name in sorted(files):
+                  archive.writestr(name, files[name])
+              archive.writestr('Verified_Files.json', json.dumps(reports, indent=2))
+          with zipfile.ZipFile(output) as archive:
+              assert archive.testzip() is None
+          digest = hashlib.sha256(open(output, 'rb').read()).hexdigest()
+          print(output, digest)
+          open(output + '.sha256', 'w').write(digest + '  ' + output + '\n')
+      - name: Publish the single download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view jacob-v5-ten-edits --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload jacob-v5-ten-edits Jacob_Co_All_10_Videos_V5.zip Jacob_Co_All_10_Videos_V5.zip.sha256 --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create jacob-v5-ten-edits Jacob_Co_All_10_Videos_V5.zip Jacob_Co_All_10_Videos_V5.zip.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'Jacob & Co — All 10 Video Edits V5' --notes 'All ten original verified V5 videos and YouTube posting text in one ZIP. Video bytes are unchanged.'
+          fi
