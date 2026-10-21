@@ -1,0 +1,63 @@
+name: Package Jacob V6 with rebuilt 05 and 06
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/deliver-jacob-v6.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Keep the original eight videos and replace 05 and 06
+        shell: python
+        run: |
+          import urllib.request, hashlib, zipfile, io, json, os
+          root='https://raw.githubusercontent.com/naveensampath007/Whop-Clipping/'
+          sources=[
+            ('b8d4216','Jacob_Co_V5_Runway_And_Slideshows.zip','9a8650a7bdc0e074cb26d5862326d5ce1ab35d25b27ce684a7a34ca53c417bf0'),
+            ('b8d4216','Jacob_Co_V5_Four_Making_Stories.zip','f5c58f88f5658945b39eeaa010683cbebc2af4e7cdd28bb487a0c2766ee20329')]
+          files,reports={},{}
+          for ref,name,digest in sources:
+            data=urllib.request.urlopen(root+ref+'/downloads/'+name,timeout=90).read()
+            assert hashlib.sha256(data).hexdigest()==digest
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+              assert z.testzip() is None
+              for item in z.infolist():
+                if item.filename=='Verified_Files.json':
+                  reports.update({r['id']:r for r in json.loads(z.read(item))})
+                else: files[item.filename]=z.read(item)
+          old_posting=files['YouTube_Posting_Text.txt'].decode()
+          url=root+os.environ['GITHUB_SHA']+'/downloads/Jacob_Co_Rebuilt_05_06_V6.zip'
+          patch=urllib.request.urlopen(url,timeout=90).read()
+          with zipfile.ZipFile(io.BytesIO(patch)) as z:
+            assert z.testzip() is None
+            updated=json.loads(z.read('Verified_Files.json'))
+            assert {r['id'] for r in updated}=={'05','06'}
+            for r in updated:
+              del files[reports[r['id']]['filename']]
+              files[r['filename']]=z.read(r['filename'])
+              reports[r['id']]=r
+            updated_posting=z.read('YouTube_Posting_Text.txt').decode().strip().split('\n\n')
+          blocks=old_posting.strip().split('\n\n')
+          replacements={block[:2]:block for block in updated_posting if block[:2] in {'05','06'}}
+          files['YouTube_Posting_Text.txt']=('\n\n'.join(replacements.get(block[:2],block) for block in blocks)+'\n').encode()
+          files['README.txt']=b'ALL TEN VIDEOS: V6 replaces only 05 and 06. The other eight videos retain their original V5 video bytes. Both replacements combine making/product photos, moving making/mannequin footage and Kylie wearing the bra; each is 14.8 seconds. Posting text is included.\n'
+          assert len(reports)==10 and sum(name.endswith('.mp4') for name in files)==10
+          for r in reports.values():
+            assert hashlib.sha256(files[r['filename']]).hexdigest()==r['sha256']
+          output='Jacob_Co_All_10_Videos_Updated_V6.zip'
+          with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_STORED) as z:
+            for name in sorted(files):z.writestr(name,files[name])
+            z.writestr('Verified_Files.json',json.dumps([reports[k] for k in sorted(reports)],indent=2))
+          with zipfile.ZipFile(output) as z:assert z.testzip() is None
+          digest=hashlib.sha256(open(output,'rb').read()).hexdigest()
+          open(output+'.sha256','w').write(digest+'  '+output+'\n')
+          print(output,digest)
+      - name: Publish the updated single ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create jacob-v6-updated-05-06 Jacob_Co_All_10_Videos_Updated_V6.zip Jacob_Co_All_10_Videos_Updated_V6.zip.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'Jacob & Co — All 10 Videos, Updated 05 and 06' --notes 'Rebuilt mixed-media edits 05 and 06 replace the old photo slideshows. Other eight videos are unchanged. All ten MP4s and updated YouTube posting text in one ZIP.'
